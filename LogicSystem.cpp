@@ -8,6 +8,9 @@ LogicSystem::LogicSystem() {
 	RegGet("/get_test", [](std::shared_ptr<HttpConnection> connection) {
 		// 处理GET请求的Lambda函数，向客户端发送一个简单的响应
 		boost::beast::ostream(connection->_response.body()) << "This is a test response for GET /get_test.";	// 设置响应体内容
+		for (auto& param : connection->_get_params) {
+			boost::beast::ostream(connection->_response.body()) << "\nParam: " << param.first << " = " << param.second;	// 输出GET请求的参数
+		}
 	});
 }
 
