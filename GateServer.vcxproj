@@ -124,6 +124,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="ConfigManager.cpp" />
     <ClCompile Include="CServer.cpp" />
     <ClCompile Include="GateServer.cpp" />
     <ClCompile Include="HttpConnection.cpp" />
@@ -133,6 +134,7 @@
     <ClCompile Include="VerifyGrpcClient.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="ConfigManager.h" />
     <ClInclude Include="CServer.h" />
     <ClInclude Include="global.h" />
     <ClInclude Include="HttpConnection.h" />
@@ -143,6 +145,7 @@
     <ClInclude Include="VerifyGrpcClient.h" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="config.ini" />
     <None Include="message.proto" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

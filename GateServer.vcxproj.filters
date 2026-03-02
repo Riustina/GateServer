@@ -36,6 +36,9 @@
     <ClCompile Include="VerifyGrpcClient.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="ConfigManager.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="CServer.h">
@@ -62,8 +65,12 @@
     <ClInclude Include="VerifyGrpcClient.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="ConfigManager.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="message.proto" />
+    <None Include="config.ini" />
   </ItemGroup>
 </Project>
