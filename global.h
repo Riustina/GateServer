@@ -11,6 +11,3 @@ enum ErrorCodes {
 	Error_Json = 1001,
 	RPC_Failed = 1002,
 };
-
-class ConfigManager;
-extern ConfigManager configManager;

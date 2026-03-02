@@ -3,11 +3,11 @@
 #include "CServer.h"
 #include <iostream>
 #include "HttpConnection.h"
+#include "AsioIOServicePool.h"
 
 CServer::CServer(boost::asio::io_context& ioc, unsigned short& port) : 
 	_ioc(ioc), 
-	_acceptor(ioc, boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), port)),
-	_socket(ioc)
+	_acceptor(ioc, boost::asio::ip::tcp::endpoint(boost::asio::ip::tcp::v4(), port))
 {
 
 }
@@ -16,12 +16,14 @@ CServer::CServer(boost::asio::io_context& ioc, unsigned short& port) :
 void CServer::Start()
 {
     auto self = shared_from_this();
-    _acceptor.async_accept(_socket, [this, self](boost::beast::error_code ec)
+	auto& io_context = AsioIOServicePool::getInstance().GetIOService();
+	std::shared_ptr<HttpConnection> new_connection = std::make_shared<HttpConnection>(io_context);  // 创建一个新的HttpConnection对象，使用从AsioIOServicePool获取的io_context
+    _acceptor.async_accept(new_connection->GetSocket(), [self, new_connection](boost::beast::error_code ec)
         {
             try {
                 if (!ec) {
                     // 成功接受连接，创建HttpConnection处理
-                    std::make_shared<HttpConnection>(std::move(_socket))->Start();
+                    new_connection->Start();
                 }
                 else {
                     std::cerr << "[CServer.cpp] 函数 [Start()] Accept error: " << ec.message() << std::endl;

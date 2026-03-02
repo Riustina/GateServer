@@ -6,13 +6,12 @@
 
 int main()
 {
-	ConfigManager configManager;	// 创建ConfigManager对象，读取配置文件
+	auto &configManager = ConfigManager::getInstance();	// 初始化配置管理器，加载配置文件
 	unsigned short port = static_cast<unsigned short>(std::stoi(configManager["GateServer"]["port"]));	// 从配置文件中获取服务器监听的端口号
 
 
 	try {
 		boost::asio::io_context ioc{ 1 };	// 创建io_context对象，用于异步操作
-		// unsigned short port = static_cast<unsigned short>(8080);		// 定义服务器监听的端口号
 		boost::asio::signal_set signals(ioc, SIGINT, SIGTERM);	// 创建一个信号集，用于捕捉终止信号
 		signals.async_wait([&ioc](boost::system::error_code /*ec*/, int /*signo*/)
 		{

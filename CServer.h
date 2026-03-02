@@ -17,7 +17,7 @@ public:
 private:
 	boost::asio::ip::tcp::acceptor _acceptor;						// TCP接收器，用于监听和接受连接
 	boost::asio::io_context& _ioc;									// 引用io_context对象，用于异步操作
-	boost::asio::ip::tcp::socket _socket;							// TCP套接字，用于与客户端通信
+	// boost::asio::ip::tcp::socket _socket;							// TCP套接字，用于与客户端通信
 
 };
 

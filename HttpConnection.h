@@ -11,8 +11,9 @@ class HttpConnection : public std::enable_shared_from_this<HttpConnection>
 {
 public:
 	friend class LogicSystem;	// 让LogicSystem类成为HttpConnection的友元类，可以访问其私有成员
-	HttpConnection(boost::asio::ip::tcp::socket socket);	// 构造函数，接受一个TCP套接字
+	HttpConnection(boost::asio::io_context& ioc);	// 构造函数，初始化成员变量
 	void Start();											// 启动连接，开始处理请求
+	boost::asio::ip::tcp::socket& GetSocket() { return _socket; }	// 获取TCP套接字的引用，用于与客户端通信
 private:
 	void CheckDeadLine();									// 检查连接是否超时
 	void WriteResponse();									// 向客户端发送响应

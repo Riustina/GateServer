@@ -4,26 +4,16 @@
 #include <map>
 #include <string>
 #include <iostream>
+#include "Singleton.h"
 
 struct SectionInfo {
     SectionInfo() {}
     ~SectionInfo() {
         _section_datas.clear();
     }
-
-    SectionInfo(const SectionInfo& src) {
-        _section_datas = src._section_datas;
-    }
-
-    SectionInfo& operator = (const SectionInfo& src) {
-        if (&src == this) return *this;
-        this->_section_datas = src._section_datas;
-        return *this;
-    }
-
     std::map<std::string, std::string> _section_datas;
 
-    // ÓÅ»¯£º·µ»Ø const string& ±ÜÃâ×Ö·û´®¿½±´
+    // ·µ»Ø const string& ±ÜÃâ×Ö·û´®¿½±´
     const std::string& operator[](const std::string& key) const {
         auto it = _section_datas.find(key);
         if (it == _section_datas.end()) {
@@ -36,14 +26,15 @@ struct SectionInfo {
     }
 };
 
-class ConfigManager
+class ConfigManager : public Singleton<ConfigManager>
 {
+    friend class Singleton<ConfigManager>;
 public:
     ~ConfigManager() {
         _config_map.clear();
     }
 
-    // ÓÅ»¯£º·µ»Ø const SectionInfo& ±ÜÃâ¿½±´Õû¸ö map
+    // ·µ»Ø const SectionInfo& ±ÜÃâ¿½±´Õû¸ö map
     const SectionInfo& operator[](const std::string& section) const {
         auto it = _config_map.find(section);
         if (it == _config_map.end()) {
@@ -55,18 +46,9 @@ public:
         return it->second;
     }
 
-    ConfigManager& operator=(const ConfigManager& src) {
-        if (&src == this) return *this;
-        this->_config_map = src._config_map;
-        return *this;
-    }
-
-    ConfigManager(const ConfigManager& src) {
-        this->_config_map = src._config_map;
-    }
-
-    ConfigManager();
-
 private:
+    ConfigManager();
+    ConfigManager(const ConfigManager&) = delete;
+    ConfigManager& operator=(const ConfigManager&) = delete;
     std::map<std::string, SectionInfo> _config_map;
 };
