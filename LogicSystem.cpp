@@ -1,3 +1,5 @@
+// LogicSystem.cpp
+
 #include "LogicSystem.h"
 #include "HttpConnection.h"
 #include <boost/beast/http.hpp>
@@ -19,7 +21,7 @@ LogicSystem::LogicSystem() {
 	
 	RegPost("/get_verifycode", [](std::shared_ptr<HttpConnection> connection) {
 		auto body_str = boost::beast::buffers_to_string(connection->_request.body().data());	// 获取POST请求的请求体内容
-		std::cout << "Received POST /get_verifycode with body: " << body_str << std::endl;	// 输出请求体内容
+		std::cerr << "Received POST /get_verifycode with body: " << body_str << std::endl;	// 输出请求体内容
 		connection->_response.set(boost::beast::http::field::content_type, "text/json");	// 设置响应的Content-Type头部字段
 
 		Json::Reader reader;		// 创建一个Json::Reader对象，用于解析JSON数据
@@ -32,10 +34,10 @@ LogicSystem::LogicSystem() {
 		// 如果解析失败或者缺少email字段，输出错误信息并返回错误响应
 		if (!parseSuccess || !source.isMember("email")) {
 			if (!parseSuccess) {
-				std::cout << "[LogicSystem.cpp] 函数 [RegPost] Failed to parse JSON: " << reader.getFormattedErrorMessages() << std::endl;	// 输出解析错误信息
+				std::cerr << "[LogicSystem.cpp] 函数 [RegPost] Failed to parse JSON: " << reader.getFormattedErrorMessages() << std::endl;	// 输出解析错误信息
 			}
 			else {
-				std::cout << "[LogicSystem.cpp] 函数 [RegPost] JSON does not contain 'email' field." << std::endl;	// 输出缺少email字段的错误信息
+				std::cerr << "[LogicSystem.cpp] 函数 [RegPost] JSON does not contain 'email' field." << std::endl;	// 输出缺少email字段的错误信息
 			}
 			response["error"] = ErrorCodes::Error_Json;	// 设置错误码
 			jsonStr = response.toStyledString();	// 将响应数据转换为JSON字符串
@@ -45,7 +47,7 @@ LogicSystem::LogicSystem() {
 
 		// 解析成功且包含email字段，输出email值并构建成功响应
 		auto email = source["email"].asString();	// 从请求体中获取email字段的值
-		// std::cout << "Email: " << email << std::endl;	// 输出email值
+		// std::cerr << "Email: " << email << std::endl;	// 输出email值
 		response["error"] = ErrorCodes::Success;	// 设置成功的错误码
 		response["email"] = source["email"];	// 将请求中的email字段原样返回到响应中
 		jsonStr = response.toStyledString();	// 将响应数据转换为JSON字符串

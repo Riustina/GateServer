@@ -1,3 +1,5 @@
+// global.h
+
 #pragma once
 //namespace beast = boost::beast;         // from <boost/beast.hpp>
 //namespace http = beast::http;           // from <boost/beast/http.hpp>

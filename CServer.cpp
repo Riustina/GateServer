@@ -1,3 +1,5 @@
+// CServer.cpp
+
 #include "CServer.h"
 #include <iostream>
 #include "HttpConnection.h"
@@ -10,24 +12,28 @@ CServer::CServer(boost::asio::io_context& ioc, unsigned short& port) :
 
 }
 
+// CServer.cpp
 void CServer::Start()
 {
-	auto self = shared_from_this();
-	_acceptor.async_accept(_socket, [this, self](boost::beast::error_code ec)
-	{
-		try {
-			// 出错就放弃连接，继续监听其他链接
-			if (ec) {
-				self->Start();
-				return;
-			}
-			// 成功接受连接后，创建一个新的HttpConnection对象来处理这个连接，并启动它
-			std::make_shared<HttpConnection>(std::move(self->_socket))->Start();	// socket被HttpConnection对象接管，不能再使用了，所以要std::move
+    auto self = shared_from_this();
+    _acceptor.async_accept(_socket, [this, self](boost::beast::error_code ec)
+        {
+            try {
+                if (!ec) {
+                    // 成功接受连接，创建HttpConnection处理
+                    std::make_shared<HttpConnection>(std::move(_socket))->Start();
+                }
+                else {
+                    std::cerr << "[CServer.cpp] 函数 [Start()] Accept error: " << ec.message() << std::endl;
+                }
 
-		}
-		catch (std::exception& e)
-		{
-			std::cerr << "[CServer.cpp] 函数 [Start()] Exception: " << e.what() << std::endl;
-		}
-	});
+                // 无论成功失败，都重新开始监听新连接
+                self->Start();
+            }
+            catch (std::exception& e) {
+                std::cerr << "[CServer.cpp] 函数 [Start()] Exception: " << e.what() << std::endl;
+                // 异常后也尝试重新监听
+                self->Start();
+            }
+        });
 }

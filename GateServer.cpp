@@ -1,4 +1,6 @@
-﻿#include <iostream>
+﻿// GateServer.cpp : 定义控制台应用程序的入口点。
+
+#include <iostream>
 #include "CServer.h"
 
 int main()
@@ -12,7 +14,7 @@ int main()
 			ioc.stop();	// 当捕捉到终止信号时，停止io_context，结束服务器运行
 		});
 		std::make_shared<CServer>(ioc, port)->Start();	// 创建CServer对象并启动服务器
-		std::cout << "GateServer is running on port " << port << "..." << std::endl;
+		std::cerr << "GateServer is running on port " << port << "..." << std::endl;
 		ioc.run();						// 运行io_context，开始处理异步事件
 	}
 	catch (std::exception& e)
