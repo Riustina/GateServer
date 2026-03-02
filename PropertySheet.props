@@ -10,6 +10,9 @@
     <Link>
       <AdditionalDependencies>json_vc71_libmtd.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
+    <ClCompile>
+      <LanguageStandard>stdcpp17</LanguageStandard>
+    </ClCompile>
   </ItemDefinitionGroup>
   <ItemGroup />
 </Project>

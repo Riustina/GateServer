@@ -8,6 +8,7 @@
 #include <json/value.h>
 #include <json/reader.h>
 #include "global.h"
+#include "VerifyGrpcClient.h"
 
 LogicSystem::LogicSystem() {
 	// 构造函数，初始化成员变量
@@ -47,8 +48,9 @@ LogicSystem::LogicSystem() {
 
 		// 解析成功且包含email字段，输出email值并构建成功响应
 		auto email = source["email"].asString();	// 从请求体中获取email字段的值
-		// std::cerr << "Email: " << email << std::endl;	// 输出email值
-		response["error"] = ErrorCodes::Success;	// 设置成功的错误码
+		GetVerifyRsp rsp = VerifyGrpcClient::getInstance().GetVerifyCode(email);	// 调用VerifyGrpcClient的GetVerifyCode方法，传入email参数
+
+		response["error"] = rsp.error();	// 设置成功的错误码
 		response["email"] = source["email"];	// 将请求中的email字段原样返回到响应中
 		jsonStr = response.toStyledString();	// 将响应数据转换为JSON字符串
 		boost::beast::ostream(connection->_response.body()) << jsonStr;	// 设置响应体内容为JSON字符串
