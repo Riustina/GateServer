@@ -1,4 +1,5 @@
 // ConfigManager.cpp
+
 #include "ConfigManager.h"
 #include <boost/filesystem.hpp>
 #include <boost/property_tree/ptree.hpp>
@@ -30,10 +31,10 @@ ConfigManager::ConfigManager() {
     try {
         // 获取当前路径并拼接配置文件路径
         boost::filesystem::path config_path = boost::filesystem::current_path() / "config.ini";
-        std::cerr << "[ConfigManager.cpp] 函数 [ConfigManager()] config path: " << config_path.string() << std::endl;
+        std::cout << "[ConfigManager.cpp] 函数 [ConfigManager()] config path: " << config_path.string() << std::endl;
 
         if (!boost::filesystem::exists(config_path)) {
-            std::cerr << "[ConfigManager.cpp] 函数 [ConfigManager()] config.ini 文件不存在!" << std::endl;
+            std::cerr << "[ConfigManager.cpp] 函数 [ConfigManager()] " << config_path.string() << " 文件不存在!" << std::endl;
             return;
         }
 
@@ -54,16 +55,16 @@ ConfigManager::ConfigManager() {
         }
 
         // 调试打印
-        std::cerr << "[ConfigManager.cpp] 函数 [ConfigManager()] 遍历配置项:" << std::endl;
+        std::cout << "[ConfigManager.cpp] 函数 [ConfigManager()] 遍历配置项:" << std::endl;
         for (const auto& section : _config_map) {
-            std::cerr << "section: " << section.first << std::endl;
+            std::cout << "section: " << section.first << std::endl;
             for (const auto& keyValue : section.second._section_datas) {
-                std::cerr << "    key: " << keyValue.first << ", value: " << keyValue.second << std::endl;
+                std::cout << "    key: " << keyValue.first << ", value: " << keyValue.second << std::endl;
             }
         }
     }
     catch (const std::exception& e) {
-        std::cerr << "[ConfigManager.cpp] 函数 [ConfigManager()] Exception: " << e.what() << std::endl;
+        std::cout << "[ConfigManager.cpp] 函数 [ConfigManager()] Exception: " << e.what() << std::endl;
     }
 }
 

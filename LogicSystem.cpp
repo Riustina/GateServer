@@ -22,7 +22,7 @@ LogicSystem::LogicSystem() {
 	
 	RegPost("/get_verifycode", [](std::shared_ptr<HttpConnection> connection) {
 		auto body_str = boost::beast::buffers_to_string(connection->_request.body().data());	// 获取POST请求的请求体内容
-		std::cerr << "Received POST /get_verifycode with body: " << body_str;	// 输出请求体内容
+		std::cout << "Received POST /get_verifycode with body: " << body_str;	// 输出请求体内容
 		connection->_response.set(boost::beast::http::field::content_type, "text/json");	// 设置响应的Content-Type头部字段
 
 		Json::Reader reader;		// 创建一个Json::Reader对象，用于解析JSON数据

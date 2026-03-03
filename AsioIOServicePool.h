@@ -3,7 +3,7 @@
 #pragma once
 #include <vector>
 #include <thread>
-#include <memory>       // ç”¨äº std::unique_ptr
+#include <memory>       // ÓÃÓÚ std::unique_ptr
 #include <boost/asio.hpp>
 #include "Singleton.h"
 
@@ -12,7 +12,7 @@ class AsioIOServicePool : public Singleton<AsioIOServicePool>
     friend Singleton<AsioIOServicePool>;
 public:
     using IOService = boost::asio::io_context;
-    // æ›´æ–°Workçš„å®šä¹‰ä¸ºexecutor_work_guard
+    // ¸üĞÂWorkµÄ¶¨ÒåÎªexecutor_work_guard
     using Work = boost::asio::executor_work_guard<boost::asio::io_context::executor_type>;
     using WorkPtr = std::unique_ptr<Work>;
 
@@ -20,7 +20,7 @@ public:
     AsioIOServicePool(const AsioIOServicePool&) = delete;
     AsioIOServicePool& operator=(const AsioIOServicePool&) = delete;
 
-    // ä½¿ç”¨ round-robin çš„æ–¹å¼è¿”å›ä¸€ä¸ª io_service
+    // Ê¹ÓÃ round-robin µÄ·½Ê½·µ»ØÒ»¸ö io_service
     boost::asio::io_context& GetIOService();
     void Stop();
 
