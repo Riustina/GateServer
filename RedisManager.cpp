@@ -2,187 +2,82 @@
 
 #include "RedisManager.h"
 #include <hiredis/hiredis.h>
+#include <cstring>   // strcmp
 #include <iostream>
-#include <cstring>  // strcmp
 
 #ifdef _WIN32
 #include <winsock2.h>
 #endif
 
-// ─────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────
+// RAII 守卫：自动将连接归还连接池
+// 好处：函数中途 return / 抛异常都能保证连接被归还，不会泄漏
+// ──────────────────────────────────────────────────────────────
+struct ConnectionGuard {
+    RedisConPool* pool;
+    redisContext* ctx;
+
+    ConnectionGuard(RedisConPool* p, redisContext* c) : pool(p), ctx(c) {}
+    ~ConnectionGuard() {
+        if (pool && ctx) {
+            pool->returnConnection(ctx);
+        }
+    }
+
+    ConnectionGuard(const ConnectionGuard&) = delete;
+    ConnectionGuard& operator=(const ConnectionGuard&) = delete;
+};
+
+// ──────────────────────────────────────────────────────────────
 // 构造 / 析构
-// ─────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────
 
-RedisManager::RedisManager() : _connect(nullptr), _port(0) {}
+RedisManager::~RedisManager() { Close(); }
 
-RedisManager::~RedisManager()
+// ──────────────────────────────────────────────────────────────
+// Init / Close
+// ──────────────────────────────────────────────────────────────
+
+bool RedisManager::Init(const std::string& host, int port,
+    const std::string& pwd, size_t poolSize)
 {
-    Close();
-}
-
-// ─────────────────────────────────────────────
-// Connect / Reconnect / Close
-// ─────────────────────────────────────────────
-
-bool RedisManager::Connect(const std::string& host, int port)
-{
-    // 释放旧连接，防止内存泄漏
-    if (_connect != nullptr) {
-        redisFree(_connect);
-        _connect = nullptr;
-    }
-
-    struct timeval timeout = { 1, 500000 }; // 1.5 秒超时
-    _connect = redisConnectWithTimeout(host.c_str(), port, timeout);
-
-    if (_connect == nullptr) {
-        std::cerr << "[RedisManager.cpp] Connect [Connect] 内存分配失败，无法创建连接对象\n";
+    pool_ = std::make_unique<RedisConPool>(poolSize, host, port, pwd);
+    if (pool_->availableCount() == 0) {
+        std::cerr << "[RedisManager.cpp] Init [Init] 连接池初始化失败，没有可用连接\n";
+        pool_.reset();
         return false;
     }
-    if (_connect->err) {
-        std::cerr << "[RedisManager.cpp] Connect [Connect] 连接失败: " << _connect->errstr << "\n";
-        redisFree(_connect);
-        _connect = nullptr;
-        return false;
-    }
-
-    // 保存参数，供 Reconnect() 使用
-    _host = host;
-    _port = port;
-
-    std::cout << "[RedisManager.cpp] Connect [Connect] 连接成功 -> " << host << ":" << port << "\n";
+    std::cout << "[RedisManager.cpp] Init [Init] 连接池就绪，可用连接数: "
+        << pool_->availableCount() << "\n";
     return true;
-}
-
-bool RedisManager::Reconnect()
-{
-    if (_host.empty() || _port == 0) {
-        std::cerr << "[RedisManager.cpp] Reconnect [Reconnect] 尚未调用过 Connect，无法重连\n";
-        return false;
-    }
-    std::cerr << "[RedisManager.cpp] Reconnect [Reconnect] 连接已断开，尝试重连 "
-        << _host << ":" << _port << " ...\n";
-    return Connect(_host, _port);
 }
 
 void RedisManager::Close()
 {
-    if (_connect != nullptr) {
-        redisFree(_connect);
-        _connect = nullptr;
-        std::cout << "[RedisManager.cpp] Close [Close] 连接已安全关闭\n";
+    if (pool_) {
+        pool_->Close();
+        pool_.reset();
+        std::cout << "[RedisManager.cpp] Close [Close] 连接池已关闭\n";
     }
 }
 
-// ─────────────────────────────────────────────
-// 内部辅助宏：执行命令后检查 reply 是否为空
-// 若为空则说明连接已断，尝试重连并重试一次
-// ─────────────────────────────────────────────
-//
-// 之所以用宏而非模板/lambda，是因为 redisCommand 是可变参数 C 函数，
-// 不能用普通函数指针统一封装；宏可以原封不动地展开调用。
-//
-#define REDIS_CMD_WITH_RETRY(reply_var, ...)                        \
-    redisReply* reply_var =                                         \
-        (redisReply*)redisCommand(_connect, __VA_ARGS__);           \
-    if ((reply_var) == nullptr) {                                   \
-        if (Reconnect()) {                                          \
-            (reply_var) =                                           \
-                (redisReply*)redisCommand(_connect, __VA_ARGS__);   \
-        }                                                           \
-    }
-
-// ─────────────────────────────────────────────
-// Auth
-// ─────────────────────────────────────────────
-
-bool RedisManager::Auth(const std::string& password)
-{
-    if (_connect == nullptr && !Reconnect()) return false;
-
-    REDIS_CMD_WITH_RETRY(reply, "AUTH %b",
-        password.c_str(), (size_t)password.length());
-
-    if (reply == nullptr) {
-        std::cerr << "[RedisManager.cpp] Auth [AUTH] 命令执行失败：无法与 Redis 通信\n";
-        return false;
-    }
-
-    bool success = false;
-    if (reply->type == REDIS_REPLY_STATUS && strcmp(reply->str, "OK") == 0) {
-        std::cout << "[RedisManager.cpp] Auth [AUTH] 认证成功\n";
-        success = true;
-    }
-    else if (reply->type == REDIS_REPLY_ERROR) {
-        std::cerr << "[RedisManager.cpp] Auth [AUTH] 认证失败: " << reply->str << "\n";
-    }
-    else {
-        std::cerr << "[RedisManager.cpp] Auth [AUTH] 未预期的返回类型: " << reply->type << "\n";
-    }
-
-    freeReplyObject(reply);
-    return success;
-}
-
-// ─────────────────────────────────────────────
-// GET / SET
-// ─────────────────────────────────────────────
-
-bool RedisManager::Get(const std::string& key, std::string& value)
-{
-    if (_connect == nullptr && !Reconnect()) return false;
-
-    REDIS_CMD_WITH_RETRY(reply, "GET %b",
-        key.c_str(), (size_t)key.length());
-
-    if (reply == nullptr) {
-        std::cerr << "[RedisManager.cpp] Get [GET] 命令执行失败，Key: " << key << "\n";
-        return false;
-    }
-
-    bool success = false;
-    switch (reply->type) {
-    case REDIS_REPLY_STRING:
-        value.assign(reply->str, reply->len);   // 二进制安全赋值
-        std::cout << "[RedisManager.cpp] Get [GET] 成功，Key: " << key << "\n";
-        success = true;
-        break;
-    case REDIS_REPLY_NIL:
-        // Key 不存在是正常业务情况，不是错误
-        std::cout << "[RedisManager.cpp] Get [GET] Key 不存在: " << key << "\n";
-        value.clear();
-        success = false;
-        break;
-    case REDIS_REPLY_ERROR:
-        std::cerr << "[RedisManager.cpp] Get [GET] Redis 返回错误: " << reply->str << "\n";
-        success = false;
-        break;
-    default:
-        std::cerr << "[RedisManager.cpp] Get [GET] 未预期的返回类型: " << reply->type << "\n";
-        success = false;
-    }
-
-    freeReplyObject(reply);
-    return success;
-}
+// ──────────────────────────────────────────────────────────────
+// SET / GET
+// ──────────────────────────────────────────────────────────────
 
 bool RedisManager::Set(const std::string& key, const std::string& value)
 {
-    if (_connect == nullptr && !Reconnect()) return false;
+    if (!pool_) return false;
+    ConnectionGuard g(pool_.get(), pool_->getConnection());
+    if (!g.ctx) { std::cerr << "[RedisManager.cpp] Set [SET] 获取连接失败\n"; return false; }
 
-    REDIS_CMD_WITH_RETRY(reply, "SET %b %b",
-        key.c_str(), (size_t)key.length(),
-        value.c_str(), (size_t)value.length());
+    redisReply* reply = (redisReply*)redisCommand(g.ctx, "SET %b %b",
+        key.c_str(), (size_t)key.length(), value.c_str(), (size_t)value.length());
+    if (!reply) { std::cerr << "[RedisManager.cpp] Set [SET] 命令无响应，Key: " << key << "\n"; g.ctx->err = 1; return false; }
 
-    if (reply == nullptr) {
-        std::cerr << "[RedisManager.cpp] Set [SET] 命令执行失败，Key: " << key << "\n";
-        return false;
-    }
-
-    bool success = false;
+    bool ok = false;
     if (reply->type == REDIS_REPLY_STATUS && strcmp(reply->str, "OK") == 0) {
-        std::cout << "[RedisManager.cpp] Set [SET] 成功，Key: " << key << "\n";
-        success = true;
+        std::cout << "[RedisManager.cpp] Set [SET] 成功，Key: " << key << "\n"; ok = true;
     }
     else if (reply->type == REDIS_REPLY_ERROR) {
         std::cerr << "[RedisManager.cpp] Set [SET] Redis 返回错误: " << reply->str << "\n";
@@ -190,34 +85,52 @@ bool RedisManager::Set(const std::string& key, const std::string& value)
     else {
         std::cerr << "[RedisManager.cpp] Set [SET] 未预期的返回类型: " << reply->type << "\n";
     }
-
     freeReplyObject(reply);
-    return success;
+    return ok;
 }
 
-// ─────────────────────────────────────────────
+bool RedisManager::Get(const std::string& key, std::string& value)
+{
+    if (!pool_) return false;
+    ConnectionGuard g(pool_.get(), pool_->getConnection());
+    if (!g.ctx) { std::cerr << "[RedisManager.cpp] Get [GET] 获取连接失败\n"; return false; }
+
+    redisReply* reply = (redisReply*)redisCommand(g.ctx, "GET %b", key.c_str(), (size_t)key.length());
+    if (!reply) { std::cerr << "[RedisManager.cpp] Get [GET] 命令无响应，Key: " << key << "\n"; g.ctx->err = 1; return false; }
+
+    bool ok = false;
+    switch (reply->type) {
+    case REDIS_REPLY_STRING:
+        value.assign(reply->str, reply->len);
+        std::cout << "[RedisManager.cpp] Get [GET] 成功，Key: " << key << "\n"; ok = true; break;
+    case REDIS_REPLY_NIL:
+        std::cout << "[RedisManager.cpp] Get [GET] Key 不存在: " << key << "\n"; value.clear(); break;
+    case REDIS_REPLY_ERROR:
+        std::cerr << "[RedisManager.cpp] Get [GET] Redis 返回错误: " << reply->str << "\n"; break;
+    default:
+        std::cerr << "[RedisManager.cpp] Get [GET] 未预期的返回类型: " << reply->type << "\n";
+    }
+    freeReplyObject(reply);
+    return ok;
+}
+
+// ──────────────────────────────────────────────────────────────
 // LPUSH / LPOP / RPUSH / RPOP
-// ─────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────
 
 bool RedisManager::LPush(const std::string& key, const std::string& value)
 {
-    if (_connect == nullptr && !Reconnect()) return false;
+    if (!pool_) return false;
+    ConnectionGuard g(pool_.get(), pool_->getConnection());
+    if (!g.ctx) { std::cerr << "[RedisManager.cpp] LPush [LPUSH] 获取连接失败\n"; return false; }
 
-    REDIS_CMD_WITH_RETRY(reply, "LPUSH %b %b",
-        key.c_str(), (size_t)key.length(),
-        value.c_str(), (size_t)value.length());
+    redisReply* reply = (redisReply*)redisCommand(g.ctx, "LPUSH %b %b",
+        key.c_str(), (size_t)key.length(), value.c_str(), (size_t)value.length());
+    if (!reply) { std::cerr << "[RedisManager.cpp] LPush [LPUSH] 命令无响应，Key: " << key << "\n"; g.ctx->err = 1; return false; }
 
-    if (reply == nullptr) {
-        std::cerr << "[RedisManager.cpp] LPush [LPUSH] 命令执行失败，Key: " << key << "\n";
-        return false;
-    }
-
-    bool success = false;
+    bool ok = false;
     if (reply->type == REDIS_REPLY_INTEGER) {
-        // reply->integer 为 Push 后列表的总长度，>= 1 才真正 Push 了数据
-        std::cout << "[RedisManager.cpp] LPush [LPUSH] 成功，Key: " << key
-            << "，当前列表长度: " << reply->integer << "\n";
-        success = true;
+        std::cout << "[RedisManager.cpp] LPush [LPUSH] 成功，Key: " << key << "，当前列表长度: " << reply->integer << "\n"; ok = true;
     }
     else if (reply->type == REDIS_REPLY_ERROR) {
         std::cerr << "[RedisManager.cpp] LPush [LPUSH] Redis 返回错误: " << reply->str << "\n";
@@ -225,66 +138,48 @@ bool RedisManager::LPush(const std::string& key, const std::string& value)
     else {
         std::cerr << "[RedisManager.cpp] LPush [LPUSH] 未预期的返回类型: " << reply->type << "\n";
     }
-
     freeReplyObject(reply);
-    return success;
+    return ok;
 }
 
 bool RedisManager::LPop(const std::string& key, std::string& value)
 {
-    if (_connect == nullptr && !Reconnect()) return false;
+    if (!pool_) return false;
+    ConnectionGuard g(pool_.get(), pool_->getConnection());
+    if (!g.ctx) { std::cerr << "[RedisManager.cpp] LPop [LPOP] 获取连接失败\n"; return false; }
 
-    REDIS_CMD_WITH_RETRY(reply, "LPOP %b",
-        key.c_str(), (size_t)key.length());
+    redisReply* reply = (redisReply*)redisCommand(g.ctx, "LPOP %b", key.c_str(), (size_t)key.length());
+    if (!reply) { std::cerr << "[RedisManager.cpp] LPop [LPOP] 命令无响应，Key: " << key << "\n"; g.ctx->err = 1; return false; }
 
-    if (reply == nullptr) {
-        std::cerr << "[RedisManager.cpp] LPop [LPOP] 命令执行失败，Key: " << key << "\n";
-        return false;
-    }
-
-    bool success = false;
+    bool ok = false;
     switch (reply->type) {
     case REDIS_REPLY_STRING:
         value.assign(reply->str, reply->len);
-        std::cout << "[RedisManager.cpp] LPop [LPOP] 成功，Key: " << key << "\n";
-        success = true;
-        break;
+        std::cout << "[RedisManager.cpp] LPop [LPOP] 成功，Key: " << key << "\n"; ok = true; break;
     case REDIS_REPLY_NIL:
-        // 队列为空是正常业务情况
-        std::cout << "[RedisManager.cpp] LPop [LPOP] 队列为空，Key: " << key << "\n";
-        success = false;
-        break;
+        std::cout << "[RedisManager.cpp] LPop [LPOP] 队列为空，Key: " << key << "\n"; break;
     case REDIS_REPLY_ERROR:
-        std::cerr << "[RedisManager.cpp] LPop [LPOP] Redis 返回错误: " << reply->str << "\n";
-        success = false;
-        break;
+        std::cerr << "[RedisManager.cpp] LPop [LPOP] Redis 返回错误: " << reply->str << "\n"; break;
     default:
         std::cerr << "[RedisManager.cpp] LPop [LPOP] 未预期的返回类型: " << reply->type << "\n";
-        success = false;
     }
-
     freeReplyObject(reply);
-    return success;
+    return ok;
 }
 
 bool RedisManager::RPush(const std::string& key, const std::string& value)
 {
-    if (_connect == nullptr && !Reconnect()) return false;
+    if (!pool_) return false;
+    ConnectionGuard g(pool_.get(), pool_->getConnection());
+    if (!g.ctx) { std::cerr << "[RedisManager.cpp] RPush [RPUSH] 获取连接失败\n"; return false; }
 
-    REDIS_CMD_WITH_RETRY(reply, "RPUSH %b %b",
-        key.c_str(), (size_t)key.length(),
-        value.c_str(), (size_t)value.length());
+    redisReply* reply = (redisReply*)redisCommand(g.ctx, "RPUSH %b %b",
+        key.c_str(), (size_t)key.length(), value.c_str(), (size_t)value.length());
+    if (!reply) { std::cerr << "[RedisManager.cpp] RPush [RPUSH] 命令无响应，Key: " << key << "\n"; g.ctx->err = 1; return false; }
 
-    if (reply == nullptr) {
-        std::cerr << "[RedisManager.cpp] RPush [RPUSH] 命令执行失败，Key: " << key << "\n";
-        return false;
-    }
-
-    bool success = false;
+    bool ok = false;
     if (reply->type == REDIS_REPLY_INTEGER) {
-        std::cout << "[RedisManager.cpp] RPush [RPUSH] 成功，Key: " << key
-            << "，当前列表长度: " << reply->integer << "\n";
-        success = true;
+        std::cout << "[RedisManager.cpp] RPush [RPUSH] 成功，Key: " << key << "，当前列表长度: " << reply->integer << "\n"; ok = true;
     }
     else if (reply->type == REDIS_REPLY_ERROR) {
         std::cerr << "[RedisManager.cpp] RPush [RPUSH] Redis 返回错误: " << reply->str << "\n";
@@ -292,72 +187,53 @@ bool RedisManager::RPush(const std::string& key, const std::string& value)
     else {
         std::cerr << "[RedisManager.cpp] RPush [RPUSH] 未预期的返回类型: " << reply->type << "\n";
     }
-
     freeReplyObject(reply);
-    return success;
+    return ok;
 }
 
 bool RedisManager::RPop(const std::string& key, std::string& value)
 {
-    if (_connect == nullptr && !Reconnect()) return false;
+    if (!pool_) return false;
+    ConnectionGuard g(pool_.get(), pool_->getConnection());
+    if (!g.ctx) { std::cerr << "[RedisManager.cpp] RPop [RPOP] 获取连接失败\n"; return false; }
 
-    REDIS_CMD_WITH_RETRY(reply, "RPOP %b",
-        key.c_str(), (size_t)key.length());
+    redisReply* reply = (redisReply*)redisCommand(g.ctx, "RPOP %b", key.c_str(), (size_t)key.length());
+    if (!reply) { std::cerr << "[RedisManager.cpp] RPop [RPOP] 命令无响应，Key: " << key << "\n"; g.ctx->err = 1; return false; }
 
-    if (reply == nullptr) {
-        std::cerr << "[RedisManager.cpp] RPop [RPOP] 命令执行失败，Key: " << key << "\n";
-        return false;
-    }
-
-    bool success = false;
+    bool ok = false;
     switch (reply->type) {
     case REDIS_REPLY_STRING:
         value.assign(reply->str, reply->len);
-        std::cout << "[RedisManager.cpp] RPop [RPOP] 成功，Key: " << key << "\n";
-        success = true;
-        break;
+        std::cout << "[RedisManager.cpp] RPop [RPOP] 成功，Key: " << key << "\n"; ok = true; break;
     case REDIS_REPLY_NIL:
-        std::cout << "[RedisManager.cpp] RPop [RPOP] 队列为空，Key: " << key << "\n";
-        success = false;
-        break;
+        std::cout << "[RedisManager.cpp] RPop [RPOP] 队列为空，Key: " << key << "\n"; break;
     case REDIS_REPLY_ERROR:
-        std::cerr << "[RedisManager.cpp] RPop [RPOP] Redis 返回错误: " << reply->str << "\n";
-        success = false;
-        break;
+        std::cerr << "[RedisManager.cpp] RPop [RPOP] Redis 返回错误: " << reply->str << "\n"; break;
     default:
         std::cerr << "[RedisManager.cpp] RPop [RPOP] 未预期的返回类型: " << reply->type << "\n";
-        success = false;
     }
-
     freeReplyObject(reply);
-    return success;
+    return ok;
 }
 
-// ─────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────
 // HSET / HGET
-// ─────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────
 
 bool RedisManager::HSet(std::string_view key, std::string_view field, std::string_view value)
 {
-    if (_connect == nullptr && !Reconnect()) return false;
+    if (!pool_) return false;
+    ConnectionGuard g(pool_.get(), pool_->getConnection());
+    if (!g.ctx) { std::cerr << "[RedisManager.cpp] HSet [HSET] 获取连接失败\n"; return false; }
 
-    REDIS_CMD_WITH_RETRY(reply, "HSET %b %b %b",
-        key.data(), key.size(),
-        field.data(), field.size(),
-        value.data(), value.size());
+    redisReply* reply = (redisReply*)redisCommand(g.ctx, "HSET %b %b %b",
+        key.data(), key.size(), field.data(), field.size(), value.data(), value.size());
+    if (!reply) { std::cerr << "[RedisManager.cpp] HSet [HSET] 命令无响应，Key: " << key << "\n"; g.ctx->err = 1; return false; }
 
-    if (reply == nullptr) {
-        std::cerr << "[RedisManager.cpp] HSet [HSET] 命令执行失败，Key: " << key << "\n";
-        return false;
-    }
-
-    bool success = false;
+    bool ok = false;
     if (reply->type == REDIS_REPLY_INTEGER) {
-        // 0 = 字段已存在并被更新，1 = 新字段被插入，两者都算成功
-        std::cout << "[RedisManager.cpp] HSet [HSET] 成功，Key: " << key
-            << "，Field: " << field
-            << (reply->integer == 1 ? "（新增）" : "（更新）") << "\n";
-        success = true;
+        std::cout << "[RedisManager.cpp] HSet [HSET] 成功，Key: " << key << "，Field: " << field
+            << (reply->integer == 1 ? "（新增）" : "（更新）") << "\n"; ok = true;
     }
     else if (reply->type == REDIS_REPLY_ERROR) {
         std::cerr << "[RedisManager.cpp] HSet [HSET] Redis 返回错误: " << reply->str << "\n";
@@ -365,78 +241,54 @@ bool RedisManager::HSet(std::string_view key, std::string_view field, std::strin
     else {
         std::cerr << "[RedisManager.cpp] HSet [HSET] 未预期的返回类型: " << reply->type << "\n";
     }
-
     freeReplyObject(reply);
-    return success;
+    return ok;
 }
 
 bool RedisManager::HGet(std::string_view key, std::string_view field, std::string& value)
 {
-    if (_connect == nullptr && !Reconnect()) return false;
+    if (!pool_) return false;
+    ConnectionGuard g(pool_.get(), pool_->getConnection());
+    if (!g.ctx) { std::cerr << "[RedisManager.cpp] HGet [HGET] 获取连接失败\n"; return false; }
 
-    REDIS_CMD_WITH_RETRY(reply, "HGET %b %b",
-        key.data(), key.size(),
-        field.data(), field.size());
+    redisReply* reply = (redisReply*)redisCommand(g.ctx, "HGET %b %b",
+        key.data(), key.size(), field.data(), field.size());
+    if (!reply) { std::cerr << "[RedisManager.cpp] HGet [HGET] 命令无响应，Key: " << key << "\n"; g.ctx->err = 1; return false; }
 
-    if (reply == nullptr) {
-        std::cerr << "[RedisManager.cpp] HGet [HGET] 命令执行失败，Key: " << key << "\n";
-        return false;
-    }
-
-    bool success = false;
+    bool ok = false;
     switch (reply->type) {
     case REDIS_REPLY_STRING:
         value.assign(reply->str, reply->len);
-        std::cout << "[RedisManager.cpp] HGet [HGET] 成功，Key: " << key
-            << "，Field: " << field << "\n";
-        success = true;
-        break;
+        std::cout << "[RedisManager.cpp] HGet [HGET] 成功，Key: " << key << "，Field: " << field << "\n"; ok = true; break;
     case REDIS_REPLY_NIL:
-        // Key 或 Field 不存在，属于正常业务情况
-        std::cout << "[RedisManager.cpp] HGet [HGET] Field 不存在，Key: " << key
-            << "，Field: " << field << "\n";
-        success = false;
-        break;
+        std::cout << "[RedisManager.cpp] HGet [HGET] Field 不存在，Key: " << key << "，Field: " << field << "\n"; break;
     case REDIS_REPLY_ERROR:
-        std::cerr << "[RedisManager.cpp] HGet [HGET] Redis 返回错误: " << reply->str << "\n";
-        success = false;
-        break;
+        std::cerr << "[RedisManager.cpp] HGet [HGET] Redis 返回错误: " << reply->str << "\n"; break;
     default:
         std::cerr << "[RedisManager.cpp] HGet [HGET] 未预期的返回类型: " << reply->type << "\n";
-        success = false;
     }
-
     freeReplyObject(reply);
-    return success;
+    return ok;
 }
 
-// ─────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────
 // DEL / EXISTS
-// ─────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────
 
 bool RedisManager::Del(std::string_view key)
 {
-    if (_connect == nullptr && !Reconnect()) return false;
+    if (!pool_) return false;
+    ConnectionGuard g(pool_.get(), pool_->getConnection());
+    if (!g.ctx) { std::cerr << "[RedisManager.cpp] Del [DEL] 获取连接失败\n"; return false; }
 
-    REDIS_CMD_WITH_RETRY(reply, "DEL %b",
-        key.data(), key.size());
+    redisReply* reply = (redisReply*)redisCommand(g.ctx, "DEL %b", key.data(), key.size());
+    if (!reply) { std::cerr << "[RedisManager.cpp] Del [DEL] 命令无响应，Key: " << key << "\n"; g.ctx->err = 1; return false; }
 
-    if (reply == nullptr) {
-        std::cerr << "[RedisManager.cpp] Del [DEL] 命令执行失败，Key: " << key << "\n";
-        return false;
-    }
-
-    bool success = false;
+    bool ok = false;
     if (reply->type == REDIS_REPLY_INTEGER) {
-        // reply->integer = 实际被删除的 Key 数量
-        // 0 表示 Key 不存在，但命令本身成功执行，业务上仍视为成功
-        if (reply->integer > 0) {
-            std::cout << "[RedisManager.cpp] Del [DEL] 成功删除，Key: " << key << "\n";
-        }
-        else {
-            std::cout << "[RedisManager.cpp] Del [DEL] Key 不存在（无需删除），Key: " << key << "\n";
-        }
-        success = true;
+        if (reply->integer > 0) std::cout << "[RedisManager.cpp] Del [DEL] 成功删除，Key: " << key << "\n";
+        else                    std::cout << "[RedisManager.cpp] Del [DEL] Key 不存在（无需删除），Key: " << key << "\n";
+        ok = true;
     }
     else if (reply->type == REDIS_REPLY_ERROR) {
         std::cerr << "[RedisManager.cpp] Del [DEL] Redis 返回错误: " << reply->str << "\n";
@@ -444,33 +296,24 @@ bool RedisManager::Del(std::string_view key)
     else {
         std::cerr << "[RedisManager.cpp] Del [DEL] 未预期的返回类型: " << reply->type << "\n";
     }
-
     freeReplyObject(reply);
-    return success;
+    return ok;
 }
 
 bool RedisManager::ExistsKey(std::string_view key)
 {
-    if (_connect == nullptr && !Reconnect()) return false;
+    if (!pool_) return false;
+    ConnectionGuard g(pool_.get(), pool_->getConnection());
+    if (!g.ctx) { std::cerr << "[RedisManager.cpp] ExistsKey [EXISTS] 获取连接失败\n"; return false; }
 
-    REDIS_CMD_WITH_RETRY(reply, "EXISTS %b",
-        key.data(), key.size());
-
-    if (reply == nullptr) {
-        std::cerr << "[RedisManager.cpp] ExistsKey [EXISTS] 命令执行失败，Key: " << key << "\n";
-        return false;
-    }
+    redisReply* reply = (redisReply*)redisCommand(g.ctx, "EXISTS %b", key.data(), key.size());
+    if (!reply) { std::cerr << "[RedisManager.cpp] ExistsKey [EXISTS] 命令无响应，Key: " << key << "\n"; g.ctx->err = 1; return false; }
 
     bool found = false;
     if (reply->type == REDIS_REPLY_INTEGER) {
-        // 单 Key 查询：0 = 不存在，1 = 存在
         found = (reply->integer > 0);
-        if (found) {
-            std::cout << "[RedisManager.cpp] ExistsKey [EXISTS] Key 存在: " << key << "\n";
-        }
-        else {
-            std::cout << "[RedisManager.cpp] ExistsKey [EXISTS] Key 不存在: " << key << "\n";
-        }
+        if (found) std::cout << "[RedisManager.cpp] ExistsKey [EXISTS] Key 存在: " << key << "\n";
+        else       std::cout << "[RedisManager.cpp] ExistsKey [EXISTS] Key 不存在: " << key << "\n";
     }
     else if (reply->type == REDIS_REPLY_ERROR) {
         std::cerr << "[RedisManager.cpp] ExistsKey [EXISTS] Redis 返回错误: " << reply->str << "\n";
@@ -478,7 +321,6 @@ bool RedisManager::ExistsKey(std::string_view key)
     else {
         std::cerr << "[RedisManager.cpp] ExistsKey [EXISTS] 未预期的返回类型: " << reply->type << "\n";
     }
-
     freeReplyObject(reply);
     return found;
 }
