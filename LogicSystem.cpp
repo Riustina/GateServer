@@ -11,6 +11,7 @@
 #include "VerifyGrpcClient.h"
 #include "RedisManager.h"
 #include "MySqlMgr.h"
+#include "StatusGrpcClient.h"
 
 LogicSystem::LogicSystem() {
 	// 构造函数，初始化成员变量
@@ -250,25 +251,25 @@ LogicSystem::LogicSystem() {
 		}
 
 		// 2. 校验必填字段
-		for (const auto& field : { "user", "passwd" }) {
+		for (const auto& field : { "email", "passwd" }) {
 			if (!src_root.isMember(field)) {
 				std::cerr << "[LogicSystem.cpp] [/user_login] 缺少字段: " << field << std::endl;
 				return send_error(ErrorCodes::Error_Json);
 			}
 		}
 
-		const std::string username = src_root["user"].asString();
+		const std::string email = src_root["email"].asString();
 		const std::string passwd = src_root["passwd"].asString();
 
 		// 3. 校验用户名与密码
 		UserInfo userInfo;
-		if (MySqlMgr::getInstance().CheckLogin(username, passwd, userInfo) != 0) {
-			std::cout << "[LogicSystem.cpp] [/user_login] 密码错误，user: " << username << std::endl;
+		if (MySqlMgr::getInstance().CheckLogin(email, passwd, userInfo) != 0) {
+			std::cout << "[LogicSystem.cpp] [/user_login] 密码错误，email: " << email << std::endl;
 			return send_error(ErrorCodes::PasswdInvalid);
 		}
 
 		// 4. 通过 gRPC 向 StatusServer 申请分配 ChatServer
-		auto reply = StatusGrpcClient::GetInstance()->GetChatServer(userInfo.uid);
+		auto reply = StatusGrpcClient::getInstance().GetChatServer(userInfo.uid);
 		if (reply.error()) {
 			std::cerr << "[LogicSystem.cpp] [/user_login] gRPC 分配 ChatServer 失败，error: " << reply.error()
 				<< "，uid: " << userInfo.uid << std::endl;
@@ -280,9 +281,10 @@ LogicSystem::LogicSystem() {
 			<< "，分配 ChatServer host: " << reply.host() << std::endl;
 		root["error"] = 0;
 		root["uid"] = userInfo.uid;
-		root["user"] = username;
+		root["email"] = email;
 		root["token"] = reply.token();
 		root["host"] = reply.host();
+		root["port"] = reply.port();
 		boost::beast::ostream(connection->_response.body()) << root.toStyledString();
 		return true;
 		});
