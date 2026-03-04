@@ -3,10 +3,18 @@
 #include <iostream>
 #include "CServer.h"
 #include "ConfigManager.h"
+#include "RedisManager.h"
 
 int main()
 {
 	auto &configManager = ConfigManager::getInstance();	// 初始化配置管理器，加载配置文件
+
+	std::string redisHost = configManager["Redis"]["host"];	// 从配置文件中获取Redis服务器的主机地址
+	unsigned short redisPort = static_cast<unsigned short>(std::stoi(configManager["Redis"]["port"]));	// 从配置文件中获取Redis服务器的端口号
+	std::string redisPwd = configManager["Redis"]["password"];	// 从配置文件中获取Redis服务器的密码
+	unsigned short redisPoolSize = static_cast<unsigned short>(std::stoi(configManager["Redis"]["pool_size"]));	// 从配置文件中获取Redis连接池的大小
+	RedisManager::getInstance().Init(redisHost, redisPort, redisPwd, redisPoolSize);	// 初始化Redis连接池
+
 	unsigned short port = static_cast<unsigned short>(std::stoi(configManager["GateServer"]["port"]));	// 从配置文件中获取服务器监听的端口号
 
 	try {

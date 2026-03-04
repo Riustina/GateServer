@@ -10,4 +10,11 @@ enum ErrorCodes {
 	Success = 0,
 	Error_Json = 1001,
 	RPC_Failed = 1002,
+	VerifyExpired = 1003,
+	VerifyCodeError = 1004,
+	UserExists = 1005,
+	PasswdError = 1006,
+	EmailNotMatch = 1007,
+	//PasswdUpFailed = 1008,
+	//PasswdInvalid = 1009,
 };
