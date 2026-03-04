@@ -175,6 +175,6 @@ redisContext* RedisConPool::createAuthenticatedConnection()
     }
 
     freeReplyObject(reply);
-    std::cout << "[RedisConPool.cpp] createAuthenticatedConnection [AUTH] 认证成功\n";
+    // std::cout << "[RedisConPool.cpp] createAuthenticatedConnection [AUTH] 认证成功\n";
     return ctx;
 }

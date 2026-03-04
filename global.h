@@ -17,4 +17,8 @@ enum ErrorCodes {
 	EmailNotMatch = 1007,
 	//PasswdUpFailed = 1008,
 	//PasswdInvalid = 1009,
+
+
+
+	MySQLFailed = 9999,
 };

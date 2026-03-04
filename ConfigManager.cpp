@@ -55,13 +55,13 @@ ConfigManager::ConfigManager() {
         }
 
         // 调试打印
-        std::cout << "[ConfigManager.cpp] 函数 [ConfigManager()] 遍历配置项:" << std::endl;
+        /*std::cout << "[ConfigManager.cpp] 函数 [ConfigManager()] 遍历配置项:" << std::endl;
         for (const auto& section : _config_map) {
             std::cout << "section: " << section.first << std::endl;
             for (const auto& keyValue : section.second._section_datas) {
                 std::cout << "    key: " << keyValue.first << ", value: " << keyValue.second << std::endl;
             }
-        }
+        }*/
     }
     catch (const std::exception& e) {
         std::cout << "[ConfigManager.cpp] 函数 [ConfigManager()] Exception: " << e.what() << std::endl;

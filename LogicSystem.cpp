@@ -10,6 +10,7 @@
 #include "global.h"
 #include "VerifyGrpcClient.h"
 #include "RedisManager.h"
+#include "MySqlMgr.h"
 
 LogicSystem::LogicSystem() {
 	// 构造函数，初始化成员变量
@@ -63,7 +64,7 @@ LogicSystem::LogicSystem() {
 	// 注册处理用户注册的POST请求的Lambda函数，处理逻辑包括解析请求体中的JSON数据、校验验证码、查询数据库等
 	RegPost("/user_register", [](std::shared_ptr<HttpConnection> connection) {
 		auto body_str = boost::beast::buffers_to_string(connection->_request.body().data());
-		std::cout << "[LogicSystem] [/user_register] Received POST with body: " << body_str << std::endl;
+		std::cout << "[LogicSystem.cpp] [/user_register] Received POST with body: " << body_str << std::endl;
 		connection->_response.set(boost::beast::http::field::content_type, "text/json");
 
 		Json::Value root;
@@ -79,14 +80,14 @@ LogicSystem::LogicSystem() {
 
 		// 1. 解析 JSON
 		if (!reader.parse(body_str, src_root)) {
-			std::cerr << "[user_register] [/user_register] JSON 解析失败" << std::endl;
+			std::cerr << "[LogicSystem.cpp] [/user_register] JSON 解析失败" << std::endl;
 			return send_error(ErrorCodes::Error_Json);
 		}
 
 		// 2. 校验必填字段是否存在
 		for (const auto& field : { "user", "email", "passwd", "verifycode" }) {
 			if (!src_root.isMember(field)) {
-				std::cerr << "[user_register] [/user_register] 缺少字段: " << field << std::endl;
+				std::cerr << "[LogicSystem.cpp] [/user_register] 缺少字段: " << field << std::endl;
 				return send_error(ErrorCodes::Error_Json);
 			}
 		}
@@ -109,12 +110,43 @@ LogicSystem::LogicSystem() {
 			return send_error(ErrorCodes::VerifyCodeError);
 		}
 
-		// 5. TODO: 查找数据库判断用户是否存在
+		// 5. 查找数据库判断用户是否存在
+		int uid = MySqlMgr::getInstance().RegUser(username, email, passwd);
+		bool valid = (uid > 0);
+		if (!valid) {  // 捕获所有错误情况
+			// 根据不同错误码给出不同的错误信息
+			switch (uid) {
+			case 0:
+				std::cout << "[LogicSystem.cpp] [/user_register] 用户名或邮箱已存在" << std::endl;
+				return send_error(ErrorCodes::UserExists);
+				break;
+			case -1:
+				std::cerr << "[LogicSystem.cpp] [/user_register] SQL异常" << std::endl;
+				break;
+			case -2:
+				std::cerr << "[LogicSystem.cpp] [/user_register] 无法获取数据库连接" << std::endl;
+				break;
+			case -3:
+				std::cerr << "[LogicSystem.cpp] [/user_register] 存储过程未返回结果" << std::endl;
+				break;
+			case -4:
+				std::cerr << "[LogicSystem.cpp] [/user_register] 发生标准异常" << std::endl;
+				break;
+			case -5:
+				std::cerr << "[LogicSystem.cpp] [/user_register] 发生未知异常" << std::endl;
+				break;
+			default:
+				std::cerr << "[LogicSystem.cpp] [/user_register] 未预期的错误码: " << uid << std::endl;
+				break;
+			}
+			return send_error(ErrorCodes::MySQLFailed);
+		}
 
 		// 6. 返回成功
 		std::cout << "[LogicSystem.cpp] [/user_register] " << email << " / " << username << " 注册成功" << std::endl;
 		RedisManager::getInstance().Del("code_" + email);	// 删除 Redis 中的验证码，避免重复使用
 		root["error"] = 0;
+		root["uid"] = uid;
 		root["email"] = email;
 		root["user"] = username;
 		root["passwd"] = passwd;
