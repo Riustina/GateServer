@@ -226,6 +226,66 @@ LogicSystem::LogicSystem() {
 		boost::beast::ostream(connection->_response.body()) << root.toStyledString();
 		return true;
 		});
+
+	// 用户登录的POST请求处理函数，逻辑包括解析请求体中的JSON数据、校验用户名与密码、通过gRPC向StatusServer申请分配ChatServer等
+	RegPost("/user_login", [](std::shared_ptr<HttpConnection> connection) {
+		auto body_str = boost::beast::buffers_to_string(connection->_request.body().data());
+		std::cout << "[LogicSystem.cpp] [/user_login] Received POST with body: " << body_str << std::endl;
+		connection->_response.set(boost::beast::http::field::content_type, "text/json");
+
+		Json::Value root;
+		Json::Reader reader;
+		Json::Value src_root;
+
+		auto send_error = [&](ErrorCodes code) {
+			root["error"] = code;
+			boost::beast::ostream(connection->_response.body()) << root.toStyledString();
+			return true;
+			};
+
+		// 1. 解析 JSON
+		if (!reader.parse(body_str, src_root)) {
+			std::cerr << "[LogicSystem.cpp] [/user_login] JSON 解析失败" << std::endl;
+			return send_error(ErrorCodes::Error_Json);
+		}
+
+		// 2. 校验必填字段
+		for (const auto& field : { "user", "passwd" }) {
+			if (!src_root.isMember(field)) {
+				std::cerr << "[LogicSystem.cpp] [/user_login] 缺少字段: " << field << std::endl;
+				return send_error(ErrorCodes::Error_Json);
+			}
+		}
+
+		const std::string username = src_root["user"].asString();
+		const std::string passwd = src_root["passwd"].asString();
+
+		// 3. 校验用户名与密码
+		UserInfo userInfo;
+		if (MySqlMgr::getInstance().CheckLogin(username, passwd, userInfo) != 0) {
+			std::cout << "[LogicSystem.cpp] [/user_login] 密码错误，user: " << username << std::endl;
+			return send_error(ErrorCodes::PasswdInvalid);
+		}
+
+		// 4. 通过 gRPC 向 StatusServer 申请分配 ChatServer
+		auto reply = StatusGrpcClient::GetInstance()->GetChatServer(userInfo.uid);
+		if (reply.error()) {
+			std::cerr << "[LogicSystem.cpp] [/user_login] gRPC 分配 ChatServer 失败，error: " << reply.error()
+				<< "，uid: " << userInfo.uid << std::endl;
+			return send_error(ErrorCodes::RPC_Failed);
+		}
+
+		// 5. 返回成功，携带分配到的 ChatServer 信息供客户端直连
+		std::cout << "[LogicSystem.cpp] [/user_login] 登录成功，uid: " << userInfo.uid
+			<< "，分配 ChatServer host: " << reply.host() << std::endl;
+		root["error"] = 0;
+		root["uid"] = userInfo.uid;
+		root["user"] = username;
+		root["token"] = reply.token();
+		root["host"] = reply.host();
+		boost::beast::ostream(connection->_response.body()) << root.toStyledString();
+		return true;
+		});
 }
 
 void LogicSystem::RegGet(const std::string& target, HttpHandler handler)
