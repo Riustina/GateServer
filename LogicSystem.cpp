@@ -112,7 +112,7 @@ LogicSystem::LogicSystem() {
 		// 5. TODO: 查找数据库判断用户是否存在
 
 		// 6. 返回成功
-		std::cout << "[LogicSystem.cpp] [/user_register] " << email << " / " << username << "注册成功" << std::endl;
+		std::cout << "[LogicSystem.cpp] [/user_register] " << email << " / " << username << " 注册成功" << std::endl;
 		RedisManager::getInstance().Del("code_" + email);	// 删除 Redis 中的验证码，避免重复使用
 		root["error"] = 0;
 		root["email"] = email;
