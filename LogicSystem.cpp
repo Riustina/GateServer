@@ -154,6 +154,78 @@ LogicSystem::LogicSystem() {
 		boost::beast::ostream(connection->_response.body()) << root.toStyledString();
 		return true;
 		});
+
+	// 重置密码的POST请求处理函数，逻辑与用户注册类似，但需要校验用户名与邮箱的匹配关系，并更新数据库中的密码
+	RegPost("/reset_pwd", [](std::shared_ptr<HttpConnection> connection) {
+		auto body_str = boost::beast::buffers_to_string(connection->_request.body().data());
+		std::cout << "[LogicSystem.cpp] [reset_pwd] Received POST with body: " << body_str << std::endl;
+		connection->_response.set(boost::beast::http::field::content_type, "text/json");
+
+		Json::Value root;
+		Json::Reader reader;
+		Json::Value src_root;
+
+		auto send_error = [&](ErrorCodes code) {
+			root["error"] = code;
+			boost::beast::ostream(connection->_response.body()) << root.toStyledString();
+			return true;
+			};
+
+		// 1. 解析 JSON
+		if (!reader.parse(body_str, src_root)) {
+			std::cerr << "[LogicSystem.cpp] [reset_pwd] JSON 解析失败" << std::endl;
+			return send_error(ErrorCodes::Error_Json);
+		}
+
+		// 2. 校验必填字段
+		for (const auto& field : { "user", "email", "passwd", "verifycode" }) {
+			if (!src_root.isMember(field)) {
+				std::cerr << "[LogicSystem.cpp] [reset_pwd] 缺少字段: " << field << std::endl;
+				return send_error(ErrorCodes::Error_Json);
+			}
+		}
+
+		const std::string email = src_root["email"].asString();
+		const std::string username = src_root["user"].asString();
+		const std::string passwd = src_root["passwd"].asString();
+		const std::string verifycode = src_root["verifycode"].asString();
+
+		// 3. 从 Redis 取验证码
+		std::string verify_code;
+		if (!RedisManager::getInstance().Get("code_" + email, verify_code)) {
+			std::cout << "[LogicSystem.cpp] [reset_pwd] 验证码已过期，email: " << email << std::endl;
+			return send_error(ErrorCodes::VerifyExpired);
+		}
+
+		// 4. 校验验证码
+		if (verify_code != verifycode) {
+			std::cout << "[LogicSystem.cpp] [reset_pwd] 验证码错误，email: " << email << std::endl;
+			return send_error(ErrorCodes::VerifyCodeError);
+		}
+
+		// 5. 校验用户名与邮箱是否匹配（0是成功了）
+		if (MySqlMgr::getInstance().CheckEmail(username, email) != 0) {
+			std::cout << "[LogicSystem.cpp] [reset_pwd] 用户名与邮箱不匹配，user: " << username << std::endl;
+			return send_error(ErrorCodes::EmailNotMatch);
+		}
+
+		// 6. 更新密码（0是成功了）
+		if (MySqlMgr::getInstance().UpdatePwd(username, passwd) != 0) {
+			std::cout << "[LogicSystem.cpp] [reset_pwd] 密码更新失败，user: " << username << std::endl;
+			return send_error(ErrorCodes::PasswdUpFailed);
+		}
+
+		// 7. 返回成功
+		std::cout << "[LogicSystem.cpp] [reset_pwd] 密码重置成功，user: " << username << std::endl;
+		RedisManager::getInstance().Del("code_" + email);	// 删除 Redis 中的验证码，避免重复使用
+		root["error"] = 0;
+		root["email"] = email;
+		root["user"] = username;
+		root["passwd"] = passwd;
+		root["verifycode"] = verifycode;
+		boost::beast::ostream(connection->_response.body()) << root.toStyledString();
+		return true;
+		});
 }
 
 void LogicSystem::RegGet(const std::string& target, HttpHandler handler)
