@@ -19,7 +19,7 @@ int MySqlMgr::UpdatePwd(const std::string& name, const std::string& pwd) {
     return _dao.UpdatePwd(name, pwd);
 }
 
-int MySqlMgr::CheckLogin(const std::string& email, const std::string& pwd, UserInfo userInfo) {
+int MySqlMgr::CheckLogin(const std::string& email, const std::string& pwd, UserInfo& userInfo) {
     return _dao.CheckLogin(email, pwd, userInfo);
 }
 
