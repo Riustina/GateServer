@@ -111,16 +111,23 @@ GetChatServerRsp StatusGrpcClient::GetChatServer(int uid)
     ClientContext context;
 
     Status status = stub->GetChatServer(&context, request, &reply);
-    if (status.ok()) {
-        std::cout << "[StatusGrpcClient.cpp] GetChatServer [GetChatServer] "
-            << "分配 ChatServer 成功，uid: " << uid
-            << "，host: " << reply.host() << "\n";
+    if (!status.ok()) {
+        std::cerr << "[StatusGrpcClient.cpp] GetChatServer [GetChatServer] "
+            << "gRPC 调用失败，uid: " << uid
+            << "，错误: " << status.error_message() << "\n";
+        reply.set_error(ErrorCodes::RPC_Failed);
         return reply;
     }
 
-    std::cerr << "[StatusGrpcClient.cpp] GetChatServer [GetChatServer] "
-        << "gRPC 调用失败，uid: " << uid
-        << "，错误: " << status.error_message() << "\n";
-    reply.set_error(ErrorCodes::RPC_Failed);
+    if (reply.error() != ErrorCodes::Success) {
+        std::cerr << "[StatusGrpcClient.cpp] GetChatServer [GetChatServer] "
+            << "StatusServer 返回业务失败，uid: " << uid
+            << "，error: " << reply.error() << "\n";
+        return reply;
+    }
+
+    std::cout << "[StatusGrpcClient.cpp] GetChatServer [GetChatServer] "
+        << "分配 ChatServer 成功，uid: " << uid
+        << "，host: " << reply.host() << "\n";
     return reply;
 }
