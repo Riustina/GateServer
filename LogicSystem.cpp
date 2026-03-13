@@ -66,7 +66,7 @@ LogicSystem::LogicSystem() {
 	RegPost("/user_register", [](std::shared_ptr<HttpConnection> connection) {
 		auto body_str = boost::beast::buffers_to_string(connection->_request.body().data());
 		std::cout << "[LogicSystem.cpp] [/user_register] Received POST with body: " << body_str << std::endl;
-		connection->_response.set(boost::beast::http::field::content_type, "text/json");
+		connection->_response.set(boost::beast::http::field::content_type, "application/json; charset=utf-8");
 
 		Json::Value root;
 		Json::Reader reader;
@@ -276,7 +276,7 @@ LogicSystem::LogicSystem() {
 		if (reply.error()) {
 			std::cerr << "[LogicSystem.cpp] [/user_login] gRPC 分配 ChatServer 失败，error: " << reply.error()
 				<< "，uid: " << userInfo.uid << std::endl;
-			return send_error(ErrorCodes::RPC_Failed, "当前没有可用的聊天服务器，请稍后再试");
+			return send_error(ErrorCodes::RPC_Failed, u8"当前没有可用的聊天服务器，请稍后再试");
 		}
 
 		// 5. 返回成功，携带分配到的 ChatServer 信息供客户端直连
