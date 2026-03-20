@@ -13,6 +13,7 @@
 #include "MySqlMgr.h"
 #include "StatusGrpcClient.h"
 #include <boost/filesystem.hpp>
+#include <algorithm>
 #include <chrono>
 #include <cctype>
 #include <fstream>
@@ -143,7 +144,59 @@ bool SaveUploadedImage(const std::string& upload_id,
 		return false;
 	}
 
-	saved_path = image_path.string();
+	saved_path = std::string("chat_images/") + image_path.filename().string();
+	return true;
+}
+
+bool ResolveImageResourcePath(const std::string& resource_key,
+	boost::filesystem::path& image_path,
+	std::string& content_type)
+{
+	image_path.clear();
+	content_type = "application/octet-stream";
+	if (resource_key.empty()) {
+		return false;
+	}
+
+	std::string normalized = resource_key;
+	std::replace(normalized.begin(), normalized.end(), '\\', '/');
+	if (normalized.find("..") != std::string::npos) {
+		return false;
+	}
+
+	static const std::string kPrefix = "chat_images/";
+	if (normalized.rfind(kPrefix, 0) != 0 || normalized.size() <= kPrefix.size()) {
+		return false;
+	}
+
+	const std::string file_name = normalized.substr(kPrefix.size());
+	if (file_name.find('/') != std::string::npos || file_name.find('\\') != std::string::npos) {
+		return false;
+	}
+
+	const boost::filesystem::path upload_root =
+		boost::filesystem::absolute(boost::filesystem::current_path() / "uploads" / "chat_images");
+	image_path = upload_root / file_name;
+	if (!boost::filesystem::exists(image_path) || !boost::filesystem::is_regular_file(image_path)) {
+		return false;
+	}
+
+	const std::string extension = image_path.extension().string();
+	if (extension == ".png") {
+		content_type = "image/png";
+	}
+	else if (extension == ".jpg" || extension == ".jpeg") {
+		content_type = "image/jpeg";
+	}
+	else if (extension == ".bmp") {
+		content_type = "image/bmp";
+	}
+	else if (extension == ".webp") {
+		content_type = "image/webp";
+	}
+	else if (extension == ".gif") {
+		content_type = "image/gif";
+	}
 	return true;
 }
 }
@@ -406,8 +459,45 @@ LogicSystem::LogicSystem() {
 
 		root["error"] = Success;
 		root["upload_id"] = upload_id;
+		root["resource_key"] = saved_path;
 		root["path"] = saved_path;
 		boost::beast::ostream(connection->_response.body()) << root.toStyledString();
+		return true;
+		});
+
+	RegGet("/download_image", [](std::shared_ptr<HttpConnection> connection) {
+		connection->_response.set(boost::beast::http::field::server, "GateServer");
+
+		const auto it = connection->_get_params.find("path");
+		if (it == connection->_get_params.end()) {
+			connection->_response.result(boost::beast::http::status::bad_request);
+			connection->_response.set(boost::beast::http::field::content_type, "text/plain; charset=utf-8");
+			boost::beast::ostream(connection->_response.body()) << "missing path";
+			return true;
+		}
+
+		boost::filesystem::path image_path;
+		std::string content_type;
+		if (!ResolveImageResourcePath(it->second, image_path, content_type)) {
+			connection->_response.result(boost::beast::http::status::not_found);
+			connection->_response.set(boost::beast::http::field::content_type, "text/plain; charset=utf-8");
+			boost::beast::ostream(connection->_response.body()) << "image not found";
+			return true;
+		}
+
+		std::ifstream input(image_path.string(), std::ios::binary);
+		if (!input.is_open()) {
+			connection->_response.result(boost::beast::http::status::internal_server_error);
+			connection->_response.set(boost::beast::http::field::content_type, "text/plain; charset=utf-8");
+			boost::beast::ostream(connection->_response.body()) << "open image failed";
+			return true;
+		}
+
+		std::ostringstream oss;
+		oss << input.rdbuf();
+		connection->_response.result(boost::beast::http::status::ok);
+		connection->_response.set(boost::beast::http::field::content_type, content_type);
+		boost::beast::ostream(connection->_response.body()) << oss.str();
 		return true;
 		});
 
