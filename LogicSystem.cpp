@@ -12,6 +12,141 @@
 #include "RedisManager.h"
 #include "MySqlMgr.h"
 #include "StatusGrpcClient.h"
+#include <boost/filesystem.hpp>
+#include <chrono>
+#include <cctype>
+#include <fstream>
+#include <sstream>
+#include <zlib.h>
+
+namespace {
+int DecodeBase64Char(unsigned char c)
+{
+	if (c >= 'A' && c <= 'Z') return c - 'A';
+	if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+	if (c >= '0' && c <= '9') return c - '0' + 52;
+	if (c == '+') return 62;
+	if (c == '/') return 63;
+	return -1;
+}
+
+bool DecodeBase64(const std::string& input, std::string& output)
+{
+	output.clear();
+	int value = 0;
+	int bit_count = -8;
+	for (unsigned char c : input) {
+		if (std::isspace(c)) {
+			continue;
+		}
+		if (c == '=') {
+			break;
+		}
+		const int decoded = DecodeBase64Char(c);
+		if (decoded < 0) {
+			return false;
+		}
+		value = (value << 6) + decoded;
+		bit_count += 6;
+		if (bit_count >= 0) {
+			output.push_back(static_cast<char>((value >> bit_count) & 0xFF));
+			bit_count -= 8;
+		}
+	}
+	return !output.empty();
+}
+
+bool DecodeIncomingImagePayload(const std::string& base64_content,
+	const std::string& content_encoding,
+	std::string& output_bytes,
+	std::string& extension)
+{
+	output_bytes.clear();
+	extension = ".png";
+
+	std::string decoded;
+	if (!DecodeBase64(base64_content, decoded)) {
+		return false;
+	}
+
+	if (content_encoding == "zlib+png") {
+		if (decoded.size() < 4) {
+			return false;
+		}
+		const unsigned char* header = reinterpret_cast<const unsigned char*>(decoded.data());
+		const uLongf expected_size =
+			(static_cast<uLongf>(header[0]) << 24) |
+			(static_cast<uLongf>(header[1]) << 16) |
+			(static_cast<uLongf>(header[2]) << 8) |
+			static_cast<uLongf>(header[3]);
+		if (expected_size == 0) {
+			return false;
+		}
+
+		std::string restored(expected_size, '\0');
+		uLongf dest_len = expected_size;
+		const int zlib_result = ::uncompress(
+			reinterpret_cast<Bytef*>(&restored[0]),
+			&dest_len,
+			reinterpret_cast<const Bytef*>(decoded.data() + 4),
+			static_cast<uLong>(decoded.size() - 4));
+		if (zlib_result != Z_OK) {
+			return false;
+		}
+		restored.resize(dest_len);
+		output_bytes = std::move(restored);
+		extension = ".png";
+		return true;
+	}
+
+	output_bytes = std::move(decoded);
+	if (output_bytes.size() >= 8 &&
+		static_cast<unsigned char>(output_bytes[0]) == 0x89 &&
+		output_bytes[1] == 'P' && output_bytes[2] == 'N' && output_bytes[3] == 'G') {
+		extension = ".png";
+	}
+	else {
+		extension = ".jpg";
+	}
+	return true;
+}
+
+bool SaveUploadedImage(const std::string& upload_id,
+	const std::string& base64_content,
+	const std::string& content_encoding,
+	std::string& saved_path)
+{
+	saved_path.clear();
+	std::string bytes;
+	std::string extension;
+	if (!DecodeIncomingImagePayload(base64_content, content_encoding, bytes, extension)) {
+		return false;
+	}
+
+	const boost::filesystem::path upload_root =
+		boost::filesystem::absolute(boost::filesystem::current_path() / "uploads" / "chat_images");
+	boost::filesystem::create_directories(upload_root);
+
+	const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+		std::chrono::system_clock::now().time_since_epoch()).count();
+	std::ostringstream oss;
+	oss << upload_id << "_" << now_ms << extension;
+	const boost::filesystem::path image_path = upload_root / oss.str();
+
+	std::ofstream output(image_path.string(), std::ios::binary);
+	if (!output.is_open()) {
+		return false;
+	}
+	output.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+	output.close();
+	if (!output.good()) {
+		return false;
+	}
+
+	saved_path = image_path.string();
+	return true;
+}
+}
 
 LogicSystem::LogicSystem() {
 	// 构造函数，初始化成员变量
@@ -224,6 +359,54 @@ LogicSystem::LogicSystem() {
 		root["user"] = username;
 		root["passwd"] = passwd;
 		root["verifycode"] = verifycode;
+		boost::beast::ostream(connection->_response.body()) << root.toStyledString();
+		return true;
+		});
+
+	RegPost("/upload_image", [](std::shared_ptr<HttpConnection> connection) {
+		auto body_str = boost::beast::buffers_to_string(connection->_request.body().data());
+		std::cout << "[LogicSystem.cpp] [/upload_image] Received POST" << std::endl;
+		connection->_response.set(boost::beast::http::field::content_type, "application/json; charset=utf-8");
+
+		Json::Value root;
+		Json::Reader reader;
+		Json::Value src_root;
+
+		auto send_error = [&](const std::string& message) {
+			root["error"] = ErrorCodes::Error_Json;
+			root["message"] = message;
+			boost::beast::ostream(connection->_response.body()) << root.toStyledString();
+			return true;
+			};
+
+		if (!reader.parse(body_str, src_root)) {
+			return send_error("JSON 解析失败");
+		}
+
+		for (const auto& field : { "upload_id", "content", "content_encoding" }) {
+			if (!src_root.isMember(field)) {
+				return send_error(std::string("缺少字段: ") + field);
+			}
+		}
+
+		const std::string upload_id = src_root["upload_id"].asString();
+		const std::string content = src_root["content"].asString();
+		const std::string content_encoding = src_root["content_encoding"].asString();
+		if (upload_id.empty() || content.empty()) {
+			return send_error("上传参数无效");
+		}
+
+		std::string saved_path;
+		if (!SaveUploadedImage(upload_id, content, content_encoding, saved_path)) {
+			root["error"] = ErrorCodes::Error_Json;
+			root["message"] = "图片上传失败，请尝试更小的图片";
+			boost::beast::ostream(connection->_response.body()) << root.toStyledString();
+			return true;
+		}
+
+		root["error"] = Success;
+		root["upload_id"] = upload_id;
+		root["path"] = saved_path;
 		boost::beast::ostream(connection->_response.body()) << root.toStyledString();
 		return true;
 		});
