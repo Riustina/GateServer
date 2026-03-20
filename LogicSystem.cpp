@@ -395,6 +395,7 @@ LogicSystem::LogicSystem() {
 		// 5. 校验用户名与邮箱是否匹配（0是成功了）
 		if (MySqlMgr::getInstance().CheckEmail(username, email) != 0) {
 			std::cout << "[LogicSystem.cpp] [reset_pwd] 用户名与邮箱不匹配，user: " << username << std::endl;
+			RedisManager::getInstance().Del("code_" + email);
 			return send_error(ErrorCodes::EmailNotMatch);
 		}
 
