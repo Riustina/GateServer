@@ -364,3 +364,4 @@ FodyWeavers.xsd
 *.dll
 /uploads
 build-cmake/
+config.ini.donotdistribute
